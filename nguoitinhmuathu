@@ -1,6 +1,6 @@
 --// CONFIG
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1401785416104939720/6LU4HbxLm8mwoS8iZ0LrbwBmZ1Wp6clskoXsEGtnymrKNLVDTeVPZbpeBKKom9wrWG6Z" -- thay bằng webhook của bạn
-local HOP_DELAY = 20 -- delay hop server (giây)
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1401785416104939720/6LU4HbxLm8mwoS8iZ0LrbwBmZ1Wp6clskoXsEGtnymrKNLVDTeVPZbpeBKKom9wrWG6Z"
+local HOP_DELAY = 20 -- giây delay mỗi lần hop
 
 --// SERVICES
 local HttpService = game:GetService("HttpService")
@@ -8,15 +8,13 @@ local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
---// ĐỌC TRẠNG THÁI TỪ TELEPORTDATA
-local teleportData = TeleportService:GetLocalPlayerTeleportData()
-local autoHop = teleportData and teleportData.autoHop or false
-local hopCount = teleportData and teleportData.hopCount or 0
+--// BIẾN
+local autoHop = false
+local hopCount = 0
 
---// HÀM GỬI WEBHOOK
+--// GỬI WEBHOOK
 local function sendWebhook(success, jobId)
     hopCount += 1
-
     local data = {
         ["username"] = "AutoHop Logger",
         ["embeds"] = {{
@@ -35,50 +33,62 @@ local function sendWebhook(success, jobId)
     local jsonData = HttpService:JSONEncode(data)
 
     pcall(function()
-        if http_request then
-            http_request({
+        if request then
+            request({
                 Url = WEBHOOK_URL,
                 Method = "POST",
                 Headers = {["Content-Type"] = "application/json"},
                 Body = jsonData
             })
-        elseif syn and syn.request then
-            syn.request({
-                Url = WEBHOOK_URL,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = jsonData
-            })
+        else
+            warn("❌ KRNL không hỗ trợ request API")
         end
     end)
 end
 
---// AUTO HOP FUNCTION
+--// FETCH SERVER LIST
+local function fetchServers()
+    local success, servers = pcall(function()
+        return HttpService:JSONDecode(
+            game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100")
+        )
+    end)
+    if success and servers and servers.data then
+        return servers.data
+    else
+        return nil
+    end
+end
+
+--// AUTO HOP LOOP
 local function autoHopServer()
     while autoHop do
         task.wait(HOP_DELAY)
 
-        local success, errorMsg = pcall(function()
-            local servers = HttpService:JSONDecode(
-                game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100")
-            )
+        local servers = fetchServers()
+        local hopped = false
 
-            for _, server in ipairs(servers.data) do
+        if servers then
+            for _, server in ipairs(servers) do
                 if server.id ~= game.JobId and server.playing < server.maxPlayers then
-                    sendWebhook(true, server.id)
-                    TeleportService:TeleportToPlaceInstance(
-                        game.PlaceId,
-                        server.id,
-                        LocalPlayer,
-                        { autoHop = autoHop, hopCount = hopCount } -- 🔑 gửi dữ liệu sang server mới
-                    )
-                    return
+                    local success, err = pcall(function()
+                        sendWebhook(true, server.id)
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LocalPlayer)
+                    end)
+
+                    if not success then
+                        warn("❌ Hop server thất bại, retry: " .. tostring(err))
+                        sendWebhook(false, server.id)
+                    end
+
+                    hopped = true
+                    break
                 end
             end
-        end)
+        end
 
-        if not success then
-            warn("❌ Lỗi hop server: " .. tostring(errorMsg))
+        if not hopped then
+            warn("⚠️ Không tìm thấy server phù hợp, sẽ retry sau " .. HOP_DELAY .. "s")
             sendWebhook(false, nil)
         end
     end
@@ -89,8 +99,8 @@ local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
 local ToggleButton = Instance.new("TextButton", ScreenGui)
 ToggleButton.Size = UDim2.new(0, 150, 0, 50)
 ToggleButton.Position = UDim2.new(0.5, -75, 0.1, 0)
-ToggleButton.Text = autoHop and "🟢 AutoHop: ON" or "🔴 AutoHop: OFF"
-ToggleButton.BackgroundColor3 = autoHop and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
+ToggleButton.Text = "🔴 AutoHop: OFF"
+ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
 ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 ToggleButton.Font = Enum.Font.SourceSansBold
 ToggleButton.TextSize = 20
@@ -109,8 +119,3 @@ ToggleButton.MouseButton1Click:Connect(function()
         ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
     end
 end)
-
--- Nếu đang bật sẵn (do teleport sang server mới) thì chạy loop
-if autoHop then
-    task.spawn(autoHopServer)
-end
