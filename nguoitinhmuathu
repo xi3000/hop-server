@@ -1,6 +1,6 @@
 --// CONFIG
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1401785416104939720/6LU4HbxLm8mwoS8iZ0LrbwBmZ1Wp6clskoXsEGtnymrKNLVDTeVPZbpeBKKom9wrWG6Z"
-local HOP_DELAY = 20 -- giây delay mỗi lần hop
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1401785416104939720/6LU4HbxLm8mwoS8iZ0LrbwBmZ1Wp6clskoXsEGtnymrKNLVDTeVPZbpeBKKom9wrWG6Z" -- Thay bằng webhook của bạn
+local HOP_DELAY = 20 -- Delay hop server (giây)
 
 --// SERVICES
 local HttpService = game:GetService("HttpService")
@@ -8,11 +8,11 @@ local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
---// BIẾN
+--// VARIABLES
 local autoHop = false
 local hopCount = 0
 
---// GỬI WEBHOOK
+--// SEND WEBHOOK
 local function sendWebhook(success, jobId)
     hopCount += 1
     local data = {
@@ -41,26 +41,26 @@ local function sendWebhook(success, jobId)
                 Body = jsonData
             })
         else
-            warn("❌ KRNL không hỗ trợ request API")
+            warn("❌ KRNL không hỗ trợ request → không gửi được webhook")
         end
     end)
 end
 
 --// FETCH SERVER LIST
 local function fetchServers()
-    local success, servers = pcall(function()
-        return HttpService:JSONDecode(
-            game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100")
-        )
+    local success, result = pcall(function()
+        return HttpService:GetAsync("https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Desc&limit=100")
     end)
-    if success and servers and servers.data then
-        return servers.data
-    else
-        return nil
+    if success then
+        local data = HttpService:JSONDecode(result)
+        if data and data.data then
+            return data.data
+        end
     end
+    return nil
 end
 
---// AUTO HOP LOOP
+--// AUTO HOP
 local function autoHopServer()
     while autoHop do
         task.wait(HOP_DELAY)
@@ -77,7 +77,7 @@ local function autoHopServer()
                     end)
 
                     if not success then
-                        warn("❌ Hop server thất bại, retry: " .. tostring(err))
+                        warn("❌ Hop server thất bại: " .. tostring(err))
                         sendWebhook(false, server.id)
                     end
 
@@ -88,7 +88,7 @@ local function autoHopServer()
         end
 
         if not hopped then
-            warn("⚠️ Không tìm thấy server phù hợp, sẽ retry sau " .. HOP_DELAY .. "s")
+            warn("⚠️ Không tìm thấy server hợp lệ, retry sau "..HOP_DELAY.." giây")
             sendWebhook(false, nil)
         end
     end
