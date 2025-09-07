@@ -1,0 +1,97 @@
+-- Auto Server Hop + GUI On/Off
+-- WARNING: Có thể vi phạm Roblox ToS nếu dùng trong game public. Dùng cẩn trọng.
+
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+local HOP_DELAY = 20
+local MAX_SERVERS_FETCH = 100
+local PLACE_ID = game.PlaceId
+local LocalPlayer = Players.LocalPlayer
+
+local autoHopEnabled = false -- trạng thái bật/tắt
+
+-- ========== GUI ==========
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AutoHopGui"
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local Button = Instance.new("TextButton")
+Button.Size = UDim2.new(0, 150, 0, 50)
+Button.Position = UDim2.new(0.05, 0, 0.1, 0)
+Button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+Button.TextScaled = true
+Button.Text = "AutoHop: OFF"
+Button.Parent = ScreenGui
+
+Button.MouseButton1Click:Connect(function()
+    autoHopEnabled = not autoHopEnabled
+    if autoHopEnabled then
+        Button.Text = "AutoHop: ON"
+        Button.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    else
+        Button.Text = "AutoHop: OFF"
+        Button.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    end
+end)
+
+-- ========== LOGIC ==========
+local function safeWait(seconds)
+    local t0 = tick()
+    while tick() - t0 < seconds do
+        task.wait(0.1)
+    end
+end
+
+local function fetchServerList()
+    local url = ("https://games.roblox.com/v1/games/%d/servers/Public?limit=%d"):format(PLACE_ID, MAX_SERVERS_FETCH)
+    local ok, res = pcall(function()
+        return HttpService:GetAsync(url)
+    end)
+    if not ok then return nil end
+    local decoded = HttpService:JSONDecode(res)
+    return decoded.data
+end
+
+local function chooseServer(servers)
+    if not servers or #servers == 0 then return nil end
+    local currentJobId = tostring(game.JobId)
+    local candidates = {}
+    for _, s in ipairs(servers) do
+        local sid = s.id
+        if sid and tostring(sid) ~= currentJobId then
+            table.insert(candidates, sid)
+        end
+    end
+    if #candidates == 0 then return nil end
+    return candidates[math.random(1, #candidates)]
+end
+
+local function hop(serverId)
+    if not serverId then return end
+    pcall(function()
+        TeleportService:TeleportToPlaceInstance(PLACE_ID, serverId, LocalPlayer)
+    end)
+end
+
+-- MAIN LOOP
+task.spawn(function()
+    while true do
+        safeWait(HOP_DELAY)
+        if autoHopEnabled then
+            local servers = fetchServerList()
+            if servers then
+                local sid = chooseServer(servers)
+                if sid then
+                    hop(sid)
+                else
+                    TeleportService:Teleport(PLACE_ID, LocalPlayer) -- fallback
+                end
+            else
+                TeleportService:Teleport(PLACE_ID, LocalPlayer) -- fallback
+            end
+        end
+    end
+end)
