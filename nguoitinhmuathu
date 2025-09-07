@@ -1,81 +1,21 @@
--- Auto Server Hop + GUI On/Off + Discord Webhook Log
--- WARNING: Có thể vi phạm Roblox ToS nếu dùng trong game public. Dùng cẩn trọng.
+--// CONFIG
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1401785416104939720/6LU4HbxLm8mwoS8iZ0LrbwBmZ1Wp6clskoXsEGtnymrKNLVDTeVPZbpeBKKom9wrWG6Z" -- thay bằng webhook của bạn
+local HOP_DELAY = 20 -- delay hop server (giây)
 
-local TeleportService = game:GetService("TeleportService")
+--// SERVICES
 local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
-
-local HOP_DELAY = 20
-local MAX_SERVERS_FETCH = 100
-local PLACE_ID = game.PlaceId
 local LocalPlayer = Players.LocalPlayer
 
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1401785416104939720/6LU4HbxLm8mwoS8iZ0LrbwBmZ1Wp6clskoXsEGtnymrKNLVDTeVPZbpeBKKom9wrWG6Z"
+--// BIẾN
+local autoHop = false
+local hopCount = 0
 
--- đọc trạng thái từ TeleportData (nếu có)
-local teleportData = TeleportService:GetLocalPlayerTeleportData()
-local autoHopEnabled = teleportData and teleportData.autoHopEnabled or false
-local hopCount = teleportData and teleportData.hopCount or 0
-
--- ========== GUI ==========
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoHopGui"
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local Button = Instance.new("TextButton")
-Button.Size = UDim2.new(0, 150, 0, 50)
-Button.Position = UDim2.new(0.05, 0, 0.1, 0)
-Button.BackgroundColor3 = autoHopEnabled and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-Button.TextColor3 = Color3.fromRGB(255, 255, 255)
-Button.TextScaled = true
-Button.Text = autoHopEnabled and "AutoHop: ON" or "AutoHop: OFF"
-Button.Parent = ScreenGui
-
-Button.MouseButton1Click:Connect(function()
-    autoHopEnabled = not autoHopEnabled
-    if autoHopEnabled then
-        Button.Text = "AutoHop: ON"
-        Button.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
-    else
-        Button.Text = "AutoHop: OFF"
-        Button.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
-    end
-end)
-
--- ========== LOGIC ==========
-local function safeWait(seconds)
-    local t0 = tick()
-    while tick() - t0 < seconds do
-        task.wait(0.1)
-    end
-end
-
-local function fetchServerList()
-    local url = ("https://games.roblox.com/v1/games/%d/servers/Public?limit=%d"):format(PLACE_ID, MAX_SERVERS_FETCH)
-    local ok, res = pcall(function()
-        return HttpService:GetAsync(url)
-    end)
-    if not ok then return nil end
-    local decoded = HttpService:JSONDecode(res)
-    return decoded.data
-end
-
-local function chooseServer(servers)
-    if not servers or #servers == 0 then return nil end
-    local currentJobId = tostring(game.JobId)
-    local candidates = {}
-    for _, s in ipairs(servers) do
-        local sid = s.id
-        if sid and tostring(sid) ~= currentJobId then
-            table.insert(candidates, sid)
-        end
-    end
-    if #candidates == 0 then return nil end
-    return candidates[math.random(1, #candidates)]
-end
-
+--// HÀM GỬI WEBHOOK
 local function sendWebhook(success, jobId)
     hopCount += 1
+
     local data = {
         ["username"] = "AutoHop Logger",
         ["embeds"] = {{
@@ -91,45 +31,78 @@ local function sendWebhook(success, jobId)
         }}
     }
 
-    pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(data), Enum.HttpContentType.ApplicationJson)
-    end)
-end
+    local jsonData = HttpService:JSONEncode(data)
 
-local function hop(serverId)
-    if not serverId then 
-        sendWebhook(false, nil)
-        return 
-    end
+    -- Dùng http_request hoặc syn.request thay vì PostAsync
     pcall(function()
-        sendWebhook(true, serverId)
-        TeleportService:TeleportToPlaceInstance(
-            PLACE_ID,
-            serverId,
-            LocalPlayer,
-            { autoHopEnabled = autoHopEnabled, hopCount = hopCount }
-        )
-    end)
-end
-
--- MAIN LOOP
-task.spawn(function()
-    while true do
-        safeWait(HOP_DELAY)
-        if autoHopEnabled then
-            local servers = fetchServerList()
-            if servers then
-                local sid = chooseServer(servers)
-                if sid then
-                    hop(sid)
-                else
-                    sendWebhook(false, nil)
-                    TeleportService:Teleport(PLACE_ID, LocalPlayer, { autoHopEnabled = autoHopEnabled, hopCount = hopCount })
-                end
-            else
-                sendWebhook(false, nil)
-                TeleportService:Teleport(PLACE_ID, LocalPlayer, { autoHopEnabled = autoHopEnabled, hopCount = hopCount })
-            end
+        if http_request then
+            http_request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = jsonData
+            })
+        elseif syn and syn.request then
+            syn.request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = jsonData
+            })
+        else
+            warn("❌ Exploit không hỗ trợ http_request / syn.request → không gửi được webhook")
         end
+    end)
+end
+
+--// AUTO HOP FUNCTION
+local function autoHopServer()
+    while autoHop do
+        task.wait(HOP_DELAY)
+
+        local success, errorMsg = pcall(function()
+            local servers = HttpService:JSONDecode(
+                game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100")
+            )
+
+            for _, server in ipairs(servers.data) do
+                if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                    sendWebhook(true, server.id)
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LocalPlayer)
+                    return
+                end
+            end
+        end)
+
+        if not success then
+            warn("❌ Lỗi hop server: " .. tostring(errorMsg))
+            sendWebhook(false, nil)
+        end
+    end
+end
+
+--// GUI
+local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+local ToggleButton = Instance.new("TextButton", ScreenGui)
+ToggleButton.Size = UDim2.new(0, 150, 0, 50)
+ToggleButton.Position = UDim2.new(0.5, -75, 0.1, 0)
+ToggleButton.Text = "🔴 AutoHop: OFF"
+ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.TextSize = 20
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Active = true
+ToggleButton.Draggable = true
+
+ToggleButton.MouseButton1Click:Connect(function()
+    autoHop = not autoHop
+    if autoHop then
+        ToggleButton.Text = "🟢 AutoHop: ON"
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+        task.spawn(autoHopServer)
+    else
+        ToggleButton.Text = "🔴 AutoHop: OFF"
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
     end
 end)
