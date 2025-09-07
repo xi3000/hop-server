@@ -8,9 +8,10 @@ local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
---// BIẾN
-local autoHop = false
-local hopCount = 0
+--// ĐỌC TRẠNG THÁI TỪ TELEPORTDATA
+local teleportData = TeleportService:GetLocalPlayerTeleportData()
+local autoHop = teleportData and teleportData.autoHop or false
+local hopCount = teleportData and teleportData.hopCount or 0
 
 --// HÀM GỬI WEBHOOK
 local function sendWebhook(success, jobId)
@@ -33,7 +34,6 @@ local function sendWebhook(success, jobId)
 
     local jsonData = HttpService:JSONEncode(data)
 
-    -- Dùng http_request hoặc syn.request thay vì PostAsync
     pcall(function()
         if http_request then
             http_request({
@@ -49,8 +49,6 @@ local function sendWebhook(success, jobId)
                 Headers = {["Content-Type"] = "application/json"},
                 Body = jsonData
             })
-        else
-            warn("❌ Exploit không hỗ trợ http_request / syn.request → không gửi được webhook")
         end
     end)
 end
@@ -68,7 +66,12 @@ local function autoHopServer()
             for _, server in ipairs(servers.data) do
                 if server.id ~= game.JobId and server.playing < server.maxPlayers then
                     sendWebhook(true, server.id)
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LocalPlayer)
+                    TeleportService:TeleportToPlaceInstance(
+                        game.PlaceId,
+                        server.id,
+                        LocalPlayer,
+                        { autoHop = autoHop, hopCount = hopCount } -- 🔑 gửi dữ liệu sang server mới
+                    )
                     return
                 end
             end
@@ -86,8 +89,8 @@ local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
 local ToggleButton = Instance.new("TextButton", ScreenGui)
 ToggleButton.Size = UDim2.new(0, 150, 0, 50)
 ToggleButton.Position = UDim2.new(0.5, -75, 0.1, 0)
-ToggleButton.Text = "🔴 AutoHop: OFF"
-ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+ToggleButton.Text = autoHop and "🟢 AutoHop: ON" or "🔴 AutoHop: OFF"
+ToggleButton.BackgroundColor3 = autoHop and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
 ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 ToggleButton.Font = Enum.Font.SourceSansBold
 ToggleButton.TextSize = 20
@@ -106,3 +109,8 @@ ToggleButton.MouseButton1Click:Connect(function()
         ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
     end
 end)
+
+-- Nếu đang bật sẵn (do teleport sang server mới) thì chạy loop
+if autoHop then
+    task.spawn(autoHopServer)
+end
