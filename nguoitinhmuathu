@@ -1,4 +1,4 @@
--- Auto Server Hop + GUI On/Off (giữ trạng thái sau khi teleport)
+-- Auto Server Hop + GUI On/Off (loop vô hạn, giữ trạng thái)
 -- WARNING: Có thể vi phạm Roblox ToS nếu dùng trong game public. Dùng cẩn trọng.
 
 local TeleportService = game:GetService("TeleportService")
@@ -13,6 +13,10 @@ local LocalPlayer = Players.LocalPlayer
 -- đọc trạng thái từ TeleportData (nếu có)
 local teleportData = TeleportService:GetLocalPlayerTeleportData()
 local autoHopEnabled = teleportData and teleportData.autoHopEnabled or false
+
+-- lưu lịch sử server đã đi qua
+local visitedServers = {}
+visitedServers[tostring(game.JobId)] = true
 
 -- ========== GUI ==========
 local ScreenGui = Instance.new("ScreenGui")
@@ -47,38 +51,48 @@ local function safeWait(seconds)
     end
 end
 
-local function fetchServerList()
+local function fetchServerList(cursor)
     local url = ("https://games.roblox.com/v1/games/%d/servers/Public?limit=%d"):format(PLACE_ID, MAX_SERVERS_FETCH)
+    if cursor then url = url .. "&cursor=" .. cursor end
     local ok, res = pcall(function()
         return HttpService:GetAsync(url)
     end)
     if not ok then return nil end
     local decoded = HttpService:JSONDecode(res)
-    return decoded.data
+    return decoded.data, decoded.nextPageCursor
 end
 
-local function chooseServer(servers)
-    if not servers or #servers == 0 then return nil end
-    local currentJobId = tostring(game.JobId)
-    local candidates = {}
-    for _, s in ipairs(servers) do
-        local sid = s.id
-        if sid and tostring(sid) ~= currentJobId then
-            table.insert(candidates, sid)
+local function chooseServer()
+    local cursor = nil
+    for _ = 1, 5 do -- thử 5 trang
+        local servers, nextCursor = fetchServerList(cursor)
+        if servers then
+            local candidates = {}
+            for _, s in ipairs(servers) do
+                local sid = s.id
+                if sid and not visitedServers[sid] and tostring(sid) ~= tostring(game.JobId) then
+                    table.insert(candidates, sid)
+                end
+            end
+            if #candidates > 0 then
+                return candidates[math.random(1, #candidates)]
+            end
         end
+        cursor = nextCursor
+        if not cursor then break end
     end
-    if #candidates == 0 then return nil end
-    return candidates[math.random(1, #candidates)]
+    return nil
 end
 
 local function hop(serverId)
     if not serverId then return end
+    visitedServers[serverId] = true
     pcall(function()
         TeleportService:TeleportToPlaceInstance(
             PLACE_ID,
             serverId,
             LocalPlayer,
-            { autoHopEnabled = autoHopEnabled } -- gửi trạng thái sang server mới
+            { autoHopEnabled = autoHopEnabled }
         )
     end)
 end
@@ -88,14 +102,9 @@ task.spawn(function()
     while true do
         safeWait(HOP_DELAY)
         if autoHopEnabled then
-            local servers = fetchServerList()
-            if servers then
-                local sid = chooseServer(servers)
-                if sid then
-                    hop(sid)
-                else
-                    TeleportService:Teleport(PLACE_ID, LocalPlayer, { autoHopEnabled = autoHopEnabled })
-                end
+            local sid = chooseServer()
+            if sid then
+                hop(sid)
             else
                 TeleportService:Teleport(PLACE_ID, LocalPlayer, { autoHopEnabled = autoHopEnabled })
             end
